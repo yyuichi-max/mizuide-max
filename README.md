@@ -1,94 +1,94 @@
-# NHKニュース取得CLI（初心者向け）
+# NHKニュース毎朝メール送信ツール（初心者向け）
 
-毎朝1回実行して、NHKニュースの最新記事をターミナルに見やすく表示するためのシンプルなPythonツールです。  
-常駐アプリではなく、**1回実行して終了するCLIツール**として作っています。
+このプロジェクトは、NHKのRSSニュースを取得して、**毎朝1回メールで受け取る**ためのPython CLIツールです。  
+常駐（ずっと動き続ける）アプリではなく、**1回実行して終了**するシンプル設計です。
 
 ---
 
 ## 1. このツールでできること
 
-- NHKのRSSから最新ニュースを取得して表示
-- 表示内容は以下の3点
-  - タイトル
-  - 公開日時（取得できる場合）
-  - URL
-- 表示件数の指定（デフォルト5件）
-- 前回表示済み記事を記録し、**新着のみ表示**できる
-- `--all` で既読を含む最新N件表示
-- `--new-only` で前回以降の新着のみ表示
-- `.env`で設定値を変更可能
+- NHK RSSからニュースを取得
+- 新着のみ / 全件 を切り替え
+- 件数を指定して本文を作成
+- SMTP（メール送信サーバー）でメール送信
+- `--print-only` で送信せず本文プレビュー
+- 状態ファイル（`.news_state.json`）で既読URL管理
 
 ---
 
-## 2. 動作イメージ
+## 2. 以前のCLI版との違い
 
-### `python main.py --all` の例
+以前: ターミナル表示中心（RSS取得→表示）  
+現在: メール送信中心（RSS取得→本文整形→送信）
 
-```text
-RSS取得先: https://www3.nhk.or.jp/rss/news/cat0.xml
-表示モード: 全件
-表示件数  : 5
-======================================================================
-NHKニュース (5件)
-======================================================================
-[1] 〇〇〇〇〇〇
-    公開日時: Tue, 31 Mar 2026 06:00:00 +0900
-    URL    : https://www3.nhk.or.jp/news/html/xxxxxxxx.html
-----------------------------------------------------------------------
-[2] △△△△△△
-    公開日時: Tue, 31 Mar 2026 05:30:00 +0900
-    URL    : https://www3.nhk.or.jp/news/html/yyyyyyyy.html
-----------------------------------------------------------------------
-```
-
-### `python main.py --new-only` で新着がない場合
-
-```text
-RSS取得先: https://www3.nhk.or.jp/rss/news/cat0.xml
-表示モード: 新着のみ
-表示件数  : 5
-新着ニュースはありませんでした。
-```
+変更点:
+- デフォルトモードを `new_only`（新着のみ）に変更
+- `--print-only` を追加
+- `--skip-empty-mail` を追加
+- SMTP設定を`.env`で管理
 
 ---
 
-## 3. 必要なもの
+## 3. 動作イメージ
 
-- Python 3.11 以上
+### 通常実行（デフォルト）
+
+```bash
+python main.py
+```
+
+- 新着記事を抽出
+- メール本文を生成
+- 送信先へメール送信
+- 送信成功後に状態ファイル更新
+
+### プレビュー実行
+
+```bash
+python main.py --print-only
+```
+
+- メール送信しない
+- 本文をターミナル表示
+- 状態ファイル更新しない
+
+---
+
+## 4. 必要なもの
+
+- Python 3.11以上
 - インターネット接続
-- ターミナル（コマンドプロンプト / PowerShell / macOSターミナル など）
+- SMTPを使えるメールアカウント（例: Gmail）
 
 ---
 
-## 4. Python のバージョン確認方法
+## 5. Python のバージョン確認方法
 
 ```bash
 python --version
 ```
 
-環境によっては `python3` を使います。
+または
 
 ```bash
 python3 --version
 ```
 
-`Python 3.11.x` 以上が表示されればOKです。
+`Python 3.11.x` 以上ならOKです。
 
 ---
 
-## 5. Python が入っていない場合の案内
+## 6. Python が入っていない場合の案内
 
-- Windows: 公式サイト https://www.python.org/downloads/windows/ からインストール
-- macOS: 公式サイト または Homebrew でインストール
-- Linux: 各ディストリビューションのパッケージマネージャでインストール
+- Windows: <https://www.python.org/downloads/windows/>
+- macOS: <https://www.python.org/downloads/macos/> または Homebrew
+- Linux: ディストリビューションのパッケージマネージャ
 
-> 補足: Windowsではインストール時に `Add Python to PATH` にチェックを入れると、`python` コマンドが使いやすくなります。
+> Windowsではインストール時に「Add Python to PATH」をオンにすると便利です。
 
 ---
 
-## 6. 仮想環境の作り方
-
-仮想環境（プロジェクト専用のPython環境）を作ると、他のプロジェクトとのライブラリ競合を避けられます。
+## 7. 仮想環境の作り方
 
 ### Windows
 
@@ -104,17 +104,17 @@ python3 -m venv .venv
 
 ---
 
-## 7. 仮想環境の有効化方法
+## 8. 仮想環境の有効化方法
 
 ### Windows
 
-#### PowerShell
+PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-#### コマンドプロンプト
+コマンドプロンプト:
 
 ```bat
 .venv\Scripts\activate.bat
@@ -126,13 +126,9 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-有効化できると、ターミナル行頭に `(.venv)` と表示されることが多いです。
-
 ---
 
-## 8. ライブラリのインストール方法
-
-仮想環境を有効化した状態で実行:
+## 9. ライブラリのインストール方法
 
 ```bash
 pip install -r requirements.txt
@@ -140,11 +136,11 @@ pip install -r requirements.txt
 
 ---
 
-## 9. `.env` の作り方
+## 10. `.env` の作り方
 
-`.env.example` をコピーして `.env` を作ります。
+`.env.example` をコピーして `.env` を作成します。
 
-### Windows（PowerShell）
+### Windows
 
 ```powershell
 Copy-Item .env.example .env
@@ -156,201 +152,214 @@ Copy-Item .env.example .env
 cp .env.example .env
 ```
 
-作成後、必要なら `.env` を編集します。
+その後、`.env`を自分のメール設定に編集してください。
+
+---
+
+## 11. Gmail などで SMTP を使う際の設定例
+
+`.env` 例:
 
 ```env
 NHK_RSS_URL=https://www3.nhk.or.jp/rss/news/cat0.xml
 NEWS_LIMIT=5
 STATE_FILE=.news_state.json
-```
 
-RSS URLが取得できない場合の代替候補:
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+SMTP_USE_TLS=true
 
-```env
-NHK_RSS_URL=https://www.nhk.or.jp/rss/news/cat0.xml
-```
-
----
-
-## 10. 初回実行方法
-
-まずは全件表示で確認するのがおすすめです。
-
-```bash
-python main.py --all
-```
-
-環境によっては `python3` を使ってください。
-
-```bash
-python3 main.py --all
+EMAIL_FROM=your_email@gmail.com
+EMAIL_TO=destination@example.com
+EMAIL_SUBJECT=毎朝のNHKニュース
+EMAIL_TIMEOUT=30
 ```
 
 ---
 
-## 11. よく使うコマンド一覧
+## 12. Gmail のアプリパスワードについて（初心者向け）
+
+Gmailでは通常のログインパスワードをSMTPに直接使えない場合があります。  
+そのときはGoogleアカウントで**2段階認証**を有効にし、**アプリパスワード**（16文字）を発行して、`SMTP_PASSWORD` に設定します。
+
+- 普段のログインパスワードをコードに書かない
+- `.env` にだけ保存する
+- `.env` はGitHubに公開しない
+
+---
+
+## 13. 初回動作確認の方法
+
+### 1) まず `--print-only` で確認
 
 ```bash
-# デフォルト実行（内部的には全件モード）
+python main.py --print-only
+```
+
+確認ポイント:
+- RSSが取得できるか
+- 本文が見やすいか
+- 件数やモードが想定どおりか
+
+### 2) 次に実送信で確認
+
+```bash
+python main.py
+```
+
+成功すると送信先にメールが届きます。
+
+---
+
+## 14. よく使うコマンド一覧
+
+```bash
+# デフォルト: 新着のみをメール送信
 python main.py
 
-# 最新N件をすべて表示
+# 既読を含む最新N件を送信
 python main.py --all
 
-# 前回以降の新着のみ表示
+# 前回以降の新着のみを送信
 python main.py --new-only
 
-# 件数を10件に変更
+# 件数変更
 python main.py --limit 10
 
-# ヘルプ表示
+# 送信せず本文表示
+python main.py --print-only
+
+# 新着0件なら送信しない
+python main.py --skip-empty-mail
+
+# ヘルプ
 python main.py --help
 ```
 
-### モードの注意点
-
-- `--all`: 既読を含めて表示
-- `--new-only`: 前回までに保存したURLを除外して表示
-- 初回実行時は状態ファイルがないため、`--new-only` でも最新記事が表示されます
-
 ---
 
-## 12. 毎朝自動実行する方法
+## 15. 毎朝自動送信する方法
 
-このツールは1回実行で終了するので、定期実行はOS標準機能（タスクスケジューラ / cron）を使います。
+## Windows タスクスケジューラ
 
-### Windows タスクスケジューラ（毎朝7:00）
+1. タスクスケジューラを開く
+2. 基本タスクを作成
+3. トリガー: 毎日（例: 07:00）
+4. 操作: プログラムの開始
+5. 設定例
+   - プログラム: `C:\path\to\project\.venv\Scripts\python.exe`
+   - 引数: `main.py`
+   - 開始(作業フォルダ): `C:\path\to\project`
 
-1. 「タスク スケジューラ」を開く
-2. 右側の「基本タスクの作成」をクリック
-3. 名前を入力（例: `NHK News CLI`）
-4. トリガーで「毎日」を選ぶ
-5. 開始時刻を `7:00:00` に設定
-6. 操作で「プログラムの開始」を選ぶ
-7. 以下を設定
-
-- プログラム/スクリプト: 仮想環境のPython実行ファイル（例）
-  - `C:\path\to\project\.venv\Scripts\python.exe`
-- 引数の追加:
-  - `main.py --new-only`
-- 開始（作業フォルダー）:
-  - `C:\path\to\project`
-
-8. 完了して保存
-
-> 重要: 「開始（作業フォルダー）」をプロジェクトフォルダにしないと、`.env` や状態ファイルが正しく扱えないことがあります。
-
-### macOS / Linux cron（毎朝7:00）
-
-1. ターミナルで以下を実行
+## macOS / Linux cron
 
 ```bash
 crontab -e
 ```
 
-2. 次の1行を追加（パスは自分の環境に置き換え）
+例（毎朝7:00）:
 
 ```cron
-0 7 * * * cd /path/to/project && /path/to/project/.venv/bin/python main.py --new-only >> nhk_news.log 2>&1
+0 7 * * * cd /path/to/project && /path/to/project/.venv/bin/python main.py >> nhk_mail.log 2>&1
 ```
-
-3. 保存して終了
-
-確認:
-
-```bash
-crontab -l
-```
-
-> 補足: `>> nhk_news.log 2>&1` は実行ログをファイルに残すための設定です（トラブル時の確認に便利）。
 
 ---
 
-## 13. トラブルシューティング
+## 16. トラブルシューティング
+
+### メールが送れない
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USE_TLS` を確認
+- 会社ネットワークでSMTPが制限されていないか確認
+
+### 認証に失敗する
+- `SMTP_USERNAME` が正しいか
+- Gmailはアプリパスワードを使っているか
+
+### SMTP_HOST / PORT がわからない
+- 利用メールサービスの公式ドキュメントを確認
+- 例: Gmail は `smtp.gmail.com:587(TLS)`
 
 ### RSS が取得できない
-
-- インターネット接続を確認
-- `.env` の `NHK_RSS_URL` を確認
-- 代替URLを試す
-
-```env
-NHK_RSS_URL=https://www.nhk.or.jp/rss/news/cat0.xml
-```
+- `NHK_RSS_URL` を確認
+- 代替URL: `https://www.nhk.or.jp/rss/news/cat0.xml`
 
 ### 文字化けする
-
-- ターミナルの文字コードをUTF-8にする
-- Windows Terminal / PowerShell を使うと改善することが多い
+- 端末の文字コードをUTF-8にする
+- メーラー側のエンコード設定を確認
 
 ### Python が見つからない
-
-- `python --version` でエラーになる場合、`python3 --version` を試す
-- Python未インストールなら公式サイトからインストール
+- `python --version` が失敗する場合、PATH設定を確認
+- `python3` コマンドも試す
 
 ### モジュールが見つからない
-
-例: `ModuleNotFoundError: No module named 'feedparser'`
-
-対処:
-
-```bash
-pip install -r requirements.txt
-```
-
-仮想環境を有効化してから実行してください。
+- 仮想環境が有効化されているか
+- `pip install -r requirements.txt` を再実行
 
 ### 前回状態ファイルの削除方法
 
-状態をリセットしたいときは、`STATE_FILE` で指定したファイルを削除します。
-デフォルトは `.news_state.json` です。
+```bash
+rm -f .news_state.json
+```
 
-#### Windows
+Windows PowerShell:
 
 ```powershell
-Remove-Item .news_state.json
-```
-
-#### macOS / Linux
-
-```bash
-rm .news_state.json
+Remove-Item .news_state.json -ErrorAction SilentlyContinue
 ```
 
 ---
 
-## 14. プロジェクト構成
+## 17. プロジェクト構成
 
 ```text
-.
-├─ main.py            # メインCLI（RSS取得・表示・状態保存）
-├─ requirements.txt   # 依存ライブラリ
-├─ .env.example       # 環境変数のサンプル
-├─ .gitignore         # Git管理から除外するファイル
-└─ README.md          # この説明書
+mizuide-max/
+├─ main.py           # CLI入口。設定読み込み、分岐、実行フロー
+├─ news_fetcher.py   # RSS取得・正規化・状態ファイル読み書き
+├─ mailer.py         # 本文生成・件名生成・SMTP送信
+├─ .env.example      # 環境変数テンプレート
+├─ requirements.txt  # 依存ライブラリ
+├─ .gitignore
+└─ README.md
 ```
 
 ---
 
-## 15. 今後の改善案
+## 18. セキュリティ上の注意
 
-- カテゴリ別RSSの切り替えコマンド追加
-- 通知連携（Slack / Discord / メール）
-- 表示フォーマットの切り替え（表形式、Markdown出力）
-- ログローテーション対応
-- テストコード追加（pytest）
+- `.env` をGitHubに上げない（`.gitignore` 済み）
+- パスワードをコードに直書きしない
+- アプリパスワードは漏れたら再発行する
 
 ---
 
-## ありがちな失敗例
+## 19. 新着なし時の仕様（重要）
 
-- `.env.example` のままで `.env` を作っていない
-- 仮想環境を有効化せずに `pip install` してしまう
-- タスクスケジューラ / cron の作業ディレクトリ未設定
-- `--new-only` なのに「新着なし」で壊れたと勘違いする（仕様どおり）
+このツールのデフォルトは **案A** です。
+
+- 新着0件でも「新着なし」メールを送信
+- 件名は `毎朝のNHKニュース（新着なし）`
+
+`--skip-empty-mail` を指定した場合のみ、0件時は送信しません。
 
 ---
 
-## ライセンス
+## 20. 状態ファイル更新ポリシー（重要）
 
-必要に応じて追記してください（例: MIT License）。
+- **実送信成功時のみ** `.news_state.json` を更新します。
+- `--print-only` は確認用途のため、状態ファイルを更新しません。
+- `--skip-empty-mail` で送信スキップ時も、状態ファイルを更新しません。
+
+これにより、送信失敗時に「未送信なのに既読化される」問題を防ぎます。
+
+---
+
+## 21. 今後の改善案
+
+- HTMLメール（見出しやリンクをより見やすく）
+- 複数宛先対応（カンマ区切り）
+- カテゴリ別RSSの複数配信
+- 失敗時の再試行回数設定
+- ログファイルのローテーション
+

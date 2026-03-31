@@ -1,69 +1,33 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-import feedparser
 from dotenv import load_dotenv
 
+from mailer import EmailConfig, MailError, SMTPConfig, build_news_body, build_subject, print_body_preview, send_mail
+from news_fetcher import NewsError, NewsItem, fetch_feed, load_seen_links, normalize_entry, save_seen_links, select_entries, validate_feed
+
 DEFAULT_RSS_URL = "https://www3.nhk.or.jp/rss/news/cat0.xml"
-ALT_RSS_URL = "https://www.nhk.or.jp/rss/news/cat0.xml"
 DEFAULT_LIMIT = 5
 DEFAULT_STATE_FILE = ".news_state.json"
+DEFAULT_SUBJECT = "毎朝のNHKニュース"
+DEFAULT_EMAIL_TIMEOUT = 30
 
 
 def parse_args() -> argparse.Namespace:
-    """CLI引数を定義して解析する。"""
     parser = argparse.ArgumentParser(
-        description="NHK RSSから最新ニュースを取得して表示するツール",
+        description="NHK RSSからニュースを取得し、毎朝メール送信するツール",
     )
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="最新N件をすべて表示します（既読も含む）",
-    )
-    parser.add_argument(
-        "--new-only",
-        action="store_true",
-        help="前回実行以降の新着だけ表示します",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="表示件数を指定します（例: --limit 10）",
-    )
+    parser.add_argument("--all", action="store_true", help="既読を含む最新N件を対象にします")
+    parser.add_argument("--new-only", action="store_true", help="前回以降の新着のみを対象にします")
+    parser.add_argument("--limit", type=int, help="対象件数を指定します（例: --limit 10）")
+    parser.add_argument("--print-only", action="store_true", help="メール送信せず本文をターミナル表示します")
+    parser.add_argument("--skip-empty-mail", action="store_true", help="新着0件のときはメール送信をスキップします")
     return parser.parse_args()
-
-
-def load_settings(args: argparse.Namespace) -> dict[str, Any]:
-    """環境変数と引数から設定値を組み立てる。"""
-    load_dotenv()
-
-    rss_url = os.getenv("NHK_RSS_URL", DEFAULT_RSS_URL).strip() or DEFAULT_RSS_URL
-
-    env_limit = os.getenv("NEWS_LIMIT", str(DEFAULT_LIMIT)).strip()
-    limit = args.limit if args.limit is not None else safe_int(env_limit, DEFAULT_LIMIT)
-    if limit <= 0:
-        print("[警告] 件数は1以上を指定してください。デフォルト5件で実行します。")
-        limit = DEFAULT_LIMIT
-
-    state_file = os.getenv("STATE_FILE", DEFAULT_STATE_FILE).strip() or DEFAULT_STATE_FILE
-
-    mode = "new_only" if args.new_only else "all"
-    if args.all:
-        mode = "all"
-
-    return {
-        "rss_url": rss_url,
-        "limit": limit,
-        "state_file": Path(state_file),
-        "mode": mode,
-    }
 
 
 def safe_int(value: str, default: int) -> int:
@@ -73,155 +37,118 @@ def safe_int(value: str, default: int) -> int:
         return default
 
 
-def fetch_feed(rss_url: str) -> feedparser.FeedParserDict:
-    """RSSフィードを取得してパースする。"""
-    return feedparser.parse(rss_url)
+def require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise ValueError(f"必須設定 {name} が未設定です。.env を確認してください。")
+    return value
 
 
-def normalize_entry(entry: feedparser.FeedParserDict) -> dict[str, str]:
-    """表示に必要な情報を取り出して整形する。"""
-    title = str(entry.get("title", "(タイトルなし)")).strip() or "(タイトルなし)"
-    link = str(entry.get("link", "(URLなし)")).strip() or "(URLなし)"
+def load_settings(args: argparse.Namespace) -> tuple[dict[str, object], SMTPConfig, EmailConfig]:
+    load_dotenv()
 
-    published = "(日時情報なし)"
-    if entry.get("published"):
-        published = str(entry.get("published")).strip()
-    elif entry.get("updated"):
-        published = str(entry.get("updated")).strip()
+    rss_url = os.getenv("NHK_RSS_URL", DEFAULT_RSS_URL).strip() or DEFAULT_RSS_URL
+    env_limit = os.getenv("NEWS_LIMIT", str(DEFAULT_LIMIT)).strip()
+    limit = args.limit if args.limit is not None else safe_int(env_limit, DEFAULT_LIMIT)
+    if limit <= 0:
+        raise ValueError("件数が不正です。--limit または NEWS_LIMIT に1以上を指定してください。")
 
-    return {
-        "title": title,
-        "link": link,
-        "published": published,
+    state_file = Path(os.getenv("STATE_FILE", DEFAULT_STATE_FILE).strip() or DEFAULT_STATE_FILE)
+
+    mode = "new_only"
+    if args.all:
+        mode = "all"
+    elif args.new_only:
+        mode = "new_only"
+
+    smtp_port = safe_int(require_env("SMTP_PORT"), 0)
+    if smtp_port <= 0:
+        raise ValueError("SMTP_PORT が不正です。数値（例: 587）を設定してください。")
+
+    smtp_cfg = SMTPConfig(
+        host=require_env("SMTP_HOST"),
+        port=smtp_port,
+        username=require_env("SMTP_USERNAME"),
+        password=require_env("SMTP_PASSWORD"),
+        use_tls=os.getenv("SMTP_USE_TLS", "true").strip().lower() in {"1", "true", "yes", "on"},
+        timeout=safe_int(os.getenv("EMAIL_TIMEOUT", str(DEFAULT_EMAIL_TIMEOUT)), DEFAULT_EMAIL_TIMEOUT),
+    )
+
+    email_cfg = EmailConfig(
+        from_addr=require_env("EMAIL_FROM"),
+        to_addr=require_env("EMAIL_TO"),
+        subject_base=os.getenv("EMAIL_SUBJECT", DEFAULT_SUBJECT).strip() or DEFAULT_SUBJECT,
+    )
+
+    app_settings: dict[str, object] = {
+        "rss_url": rss_url,
+        "limit": limit,
+        "state_file": state_file,
+        "mode": mode,
+        "print_only": args.print_only,
+        "skip_empty_mail": args.skip_empty_mail,
     }
-
-
-def load_seen_links(state_file: Path) -> set[str]:
-    """前回までに表示したURLを読み込む。"""
-    if not state_file.exists():
-        return set()
-
-    try:
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-        seen_links = data.get("seen_links", [])
-        if isinstance(seen_links, list):
-            return {str(link) for link in seen_links}
-    except (json.JSONDecodeError, OSError):
-        print("[警告] 状態ファイルを読めませんでした。新規状態として扱います。")
-
-    return set()
-
-
-def save_seen_links(state_file: Path, seen_links: set[str]) -> None:
-    """表示済みURLを保存する。"""
-    payload = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-        "seen_links": sorted(seen_links),
-    }
-
-    try:
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError as exc:
-        print(f"[警告] 状態ファイルの保存に失敗しました: {exc}")
-
-
-def filter_entries(
-    entries: list[dict[str, str]],
-    seen_links: set[str],
-    limit: int,
-    mode: str,
-) -> list[dict[str, str]]:
-    """表示対象をモードに応じて絞り込む。"""
-    if mode == "all":
-        return entries[:limit]
-
-    new_entries = [item for item in entries if item["link"] not in seen_links]
-    return new_entries[:limit]
-
-
-def print_entries(entries: list[dict[str, str]], mode: str) -> None:
-    """ニュース一覧を見やすく表示する。"""
-    if not entries:
-        if mode == "new_only":
-            print("新着ニュースはありませんでした。")
-        else:
-            print("表示できるニュースがありませんでした。")
-        return
-
-    print("=" * 70)
-    print(f"NHKニュース ({len(entries)}件)")
-    print("=" * 70)
-    for index, item in enumerate(entries, start=1):
-        print(f"[{index}] {item['title']}")
-        print(f"    公開日時: {item['published']}")
-        print(f"    URL    : {item['link']}")
-        print("-" * 70)
-
-
-def validate_feed(feed: feedparser.FeedParserDict, rss_url: str) -> bool:
-    """フィード取得結果の妥当性を確認し、エラーを案内する。"""
-    if getattr(feed, "bozo", False):
-        error = getattr(feed, "bozo_exception", None)
-        print("[エラー] RSSの解析に失敗しました。URLが正しいか確認してください。")
-        if error:
-            print(f"詳細: {error}")
-        print("代替URL例: https://www.nhk.or.jp/rss/news/cat0.xml")
-        return False
-
-    status = getattr(feed, "status", None)
-    if status and int(status) >= 400:
-        print(f"[エラー] RSSの取得に失敗しました (HTTP {status})")
-        print(f"URL: {rss_url}")
-        print("代替URL例: https://www.nhk.or.jp/rss/news/cat0.xml")
-        return False
-
-    if not getattr(feed, "entries", None):
-        print("[エラー] RSSは取得できましたが記事が見つかりませんでした。")
-        print(f"URL: {rss_url}")
-        return False
-
-    return True
+    return app_settings, smtp_cfg, email_cfg
 
 
 def main() -> int:
     args = parse_args()
-    settings = load_settings(args)
 
-    rss_url = settings["rss_url"]
-    limit = settings["limit"]
-    state_file = settings["state_file"]
-    mode = settings["mode"]
+    try:
+        settings, smtp_cfg, email_cfg = load_settings(args)
+    except ValueError as exc:
+        print(f"[エラー] {exc}")
+        return 1
+
+    rss_url = str(settings["rss_url"])
+    limit = int(settings["limit"])
+    state_file = Path(settings["state_file"])
+    mode = str(settings["mode"])
+    print_only = bool(settings["print_only"])
+    skip_empty_mail = bool(settings["skip_empty_mail"])
 
     print(f"RSS取得先: {rss_url}")
-    print(f"表示モード: {'新着のみ' if mode == 'new_only' else '全件'}")
-    print(f"表示件数  : {limit}")
+    print(f"対象モード: {'新着のみ' if mode == 'new_only' else '全件'}")
+    print(f"対象件数  : {limit}")
+    print(f"実行種別  : {'表示のみ(--print-only)' if print_only else 'メール送信'}")
 
     try:
         feed = fetch_feed(rss_url)
-    except Exception as exc:
-        print("[エラー] ネットワークまたはRSS取得処理で問題が発生しました。")
-        print(f"詳細: {exc}")
-        print("インターネット接続やRSS URLを確認してください。")
-        print(f"代替URL候補: {ALT_RSS_URL}")
+        validate_feed(feed, rss_url)
+        all_entries: list[NewsItem] = [normalize_entry(entry) for entry in feed.entries]
+        seen_links = load_seen_links(state_file)
+        target_entries = select_entries(all_entries, seen_links, limit, mode)
+    except NewsError as exc:
+        print(f"[エラー] {exc}")
         return 1
 
-    if not validate_feed(feed, rss_url):
+    sent_at = datetime.now()
+    body = build_news_body(target_entries, rss_url=rss_url, mode=mode, sent_at=sent_at)
+    subject = build_subject(email_cfg.subject_base, len(target_entries))
+
+    if print_only:
+        print_body_preview(body)
+        print("\n[情報] --print-only のため、メール送信と状態ファイル更新は行いません。")
+        return 0
+
+    if skip_empty_mail and len(target_entries) == 0:
+        print("[情報] --skip-empty-mail が指定されているため、新着0件ではメール送信をスキップしました。")
+        print("[情報] 状態ファイルも更新しません。")
+        return 0
+
+    try:
+        send_mail(smtp_cfg, email_cfg, subject=subject, body=body)
+        print(f"[完了] メールを送信しました: {email_cfg.to_addr}")
+
+        # 実送信に成功したときだけ、取得記事を既読として保存する
+        current_links = {item.link for item in all_entries if item.link != "(URLなし)"}
+        merged_links = seen_links | current_links
+        save_seen_links(state_file, merged_links)
+        print(f"[完了] 状態ファイルを更新しました: {state_file}")
+    except (MailError, NewsError) as exc:
+        print(f"[エラー] {exc}")
+        print("[案内] 送信に失敗したため、状態ファイルは更新していません。")
         return 1
-
-    normalized_entries = [normalize_entry(entry) for entry in feed.entries]
-    seen_links = load_seen_links(state_file)
-    target_entries = filter_entries(normalized_entries, seen_links, limit, mode)
-
-    print_entries(target_entries, mode)
-
-    # 取得した記事は既読として保存（次回のnew-only判定で利用）
-    current_links = {item["link"] for item in normalized_entries if item["link"] != "(URLなし)"}
-    merged_links = seen_links | current_links
-    save_seen_links(state_file, merged_links)
 
     return 0
 
