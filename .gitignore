@@ -1,13 +1,6 @@
-# Python cache
+.env
+.venv/
 __pycache__/
 *.pyc
-
-# Virtual environment
-.venv/
-venv/
-
-# Local environment file
-.env
-
-# Local state file
 .news_state.json
+*.log
